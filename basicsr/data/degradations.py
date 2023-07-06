@@ -6,6 +6,7 @@ import torch
 from scipy import special
 from scipy.stats import multivariate_normal
 from torchvision.transforms.functional_tensor import rgb_to_grayscale
+import albumentations
 
 # -------------------------------------------------------------------- #
 # --------------------------- blur kernels --------------------------- #
@@ -383,6 +384,88 @@ def random_mixed_kernels(kernel_list,
     return kernel
 
 
+def random_filter_mixed_kernels(img_gt, 
+                                kernel_list,
+                                kernel_prob,
+                                kernel_size=21,
+                                sigma_x_range=(0.6, 5),
+                                sigma_y_range=(0.6, 5),
+                                rotation_range=(-math.pi, math.pi),
+                                betag_range=(0.5, 8),
+                                betap_range=(0.5, 8),
+                                noise_range=None,
+                                albu_glass_param = (0.7, 4, 2),
+                                albu_motion_limit = (11, 17),
+                                albu_zoom_factor = ((1.1, 1.3), (0.01, 0.03))):
+    """Randomly generate mixed kernels.
+
+    Args:
+        kernel_list (tuple): a list name of kernel types,
+            support ['iso', 'aniso', 'skew', 'generalized', 'plateau_iso',
+            'plateau_aniso']
+        kernel_prob (tuple): corresponding kernel probability for each
+            kernel type
+        kernel_size (int):
+        sigma_x_range (tuple): [0.6, 5]
+        sigma_y_range (tuple): [0.6, 5]
+        rotation range (tuple): [-math.pi, math.pi]
+        beta_range (tuple): [0.5, 8]
+        noise_range(tuple, optional): multiplicative kernel noise,
+            [0.75, 1.25]. Default: None
+
+    Returns:
+        kernel (ndarray):
+    """
+    kernel_type = random.choices(kernel_list, kernel_prob)[0]
+    if kernel_type == 'iso':
+        kernel = random_bivariate_Gaussian(
+            kernel_size, sigma_x_range, sigma_y_range, rotation_range, noise_range=noise_range, isotropic=True)
+        return cv2.filter2D(img_gt, -1, kernel)
+    elif kernel_type == 'aniso':
+        kernel = random_bivariate_Gaussian(
+            kernel_size, sigma_x_range, sigma_y_range, rotation_range, noise_range=noise_range, isotropic=False)
+        return cv2.filter2D(img_gt, -1, kernel)
+    elif kernel_type == 'generalized_iso':
+        kernel = random_bivariate_generalized_Gaussian(
+            kernel_size,
+            sigma_x_range,
+            sigma_y_range,
+            rotation_range,
+            betag_range,
+            noise_range=noise_range,
+            isotropic=True)
+        return cv2.filter2D(img_gt, -1, kernel)
+    elif kernel_type == 'generalized_aniso':
+        kernel = random_bivariate_generalized_Gaussian(
+            kernel_size,
+            sigma_x_range,
+            sigma_y_range,
+            rotation_range,
+            betag_range,
+            noise_range=noise_range,
+            isotropic=False)
+        return cv2.filter2D(img_gt, -1, kernel)
+    elif kernel_type == 'plateau_iso':
+        kernel = random_bivariate_plateau(
+            kernel_size, sigma_x_range, sigma_y_range, rotation_range, betap_range, noise_range=None, isotropic=True)
+        return cv2.filter2D(img_gt, -1, kernel)
+    elif kernel_type == 'plateau_aniso':
+        kernel = random_bivariate_plateau(
+            kernel_size, sigma_x_range, sigma_y_range, rotation_range, betap_range, noise_range=None, isotropic=False)
+        return cv2.filter2D(img_gt, -1, kernel)
+    elif kernel_type == "albu_motion":
+        transform = albumentations.MotionBlur(blur_limit=albu_motion_limit, allow_shifted=True, always_apply=True)
+        img_lq = transform(image=img_gt)["image"]
+        return img_lq
+    elif kernel_type == "albu_zoom":
+        transform = albumentations.ZoomBlur(max_factor=albu_zoom_factor[0], step_factor=albu_zoom_factor[1], always_apply=True)
+        img_lq = transform(image=img_gt)["image"]
+        return img_lq
+    elif kernel_type == "albu_glass":
+        transform = albumentations.GlassBlur(sigma=albu_glass_param[0], max_delta=albu_glass_param[1], iterations=albu_glass_param[2], always_apply=True, mode='fast')
+        img_lq = transform(image=img_gt)["image"]
+        return img_lq
+
 np.seterr(divide='ignore', invalid='ignore')
 
 
@@ -741,8 +824,8 @@ def add_jpg_compression(img, quality=90):
             float32.
     """
     img = np.clip(img, 0, 1)
-    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
-    _, encimg = cv2.imencode('.jpg', img * 255., encode_param)
+    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
+    _, encimg = cv2.imencode('.jpg', img = img * 255.0, params=encode_param)
     img = np.float32(cv2.imdecode(encimg, 1)) / 255.
     return img
 
