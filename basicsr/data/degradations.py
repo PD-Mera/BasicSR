@@ -7,6 +7,8 @@ from scipy import special
 from scipy.stats import multivariate_normal
 from torchvision.transforms.functional_tensor import rgb_to_grayscale
 import albumentations
+from PIL import Image
+from pyblur import RandomizedBlur
 
 # -------------------------------------------------------------------- #
 # --------------------------- blur kernels --------------------------- #
@@ -396,7 +398,9 @@ def random_filter_mixed_kernels(img_gt,
                                 noise_range=None,
                                 albu_glass_param = (0.7, 4, 2),
                                 albu_motion_limit = (11, 17),
-                                albu_zoom_factor = ((1.1, 1.3), (0.01, 0.03))):
+                                albu_zoom_factor = ((1.1, 1.3), (0.01, 0.03)),
+                                pad_kernel=False,
+                                pad_kernel_size=21):
     """Randomly generate mixed kernels.
 
     Args:
@@ -465,6 +469,113 @@ def random_filter_mixed_kernels(img_gt,
         transform = albumentations.GlassBlur(sigma=albu_glass_param[0], max_delta=albu_glass_param[1], iterations=albu_glass_param[2], always_apply=True, mode='fast')
         img_lq = transform(image=img_gt)["image"]
         return img_lq
+    elif kernel_type == "motion":
+        return motion_blur(img_gt, kernel_size = kernel_size, pad_kernel = pad_kernel, pad_kernel_size = pad_kernel_size)
+    elif kernel_type == 'average':
+        return average_blur(img_gt, kernel_size = kernel_size, pad_kernel = pad_kernel, pad_kernel_size = pad_kernel_size)
+    elif kernel_type == 'median':
+        return median_blur(img_gt, kernel_size = kernel_size)
+    elif kernel_type == 'bilateral':
+        return bilateral_blur(img_gt, kernel_size = kernel_size)
+    elif kernel_type == 'pyblur':
+        return random_pyblur(img_gt)
+
+
+# ------------------------------------------------------------- #
+# --------------------------- blur --------------------------- #
+# ------------------------------------------------------------- #
+def motion_blur(img, kernel_size = 21, pad_kernel = False, pad_kernel_size = 21):
+    #kernel_size = random.randrange(min_kernel_size, max_kernel_size, 2)
+    base_img = img.copy()
+    kernel_h = np.zeros((kernel_size, kernel_size))
+    if random.random() > 0.5:
+        kernel_h[int((kernel_size - 1) / 2), :] = np.ones(kernel_size) # Horizontal
+    else:
+        kernel_h[:, int((kernel_size - 1) / 2)] = np.ones(kernel_size) # Vertical
+    kernel_h /= kernel_size
+    if pad_kernel:
+        pad_size = (pad_kernel_size - kernel_size) // 2
+        kernel_h = np.pad(kernel_h, ((pad_size, pad_size), (pad_size, pad_size)))
+    return cv2.filter2D(base_img, -1, kernel_h)
+
+
+def average_blur(img, kernel_size = 21, pad_kernel = False, pad_kernel_size = 21):
+    #kernel_size = random.randrange(min_kernel_size, max_kernel_size, 2)
+    base_img = img.copy()
+    kernel = np.ones((kernel_size,kernel_size),np.float32)/(kernel_size*kernel_size)
+    if pad_kernel:
+        pad_size = (pad_kernel_size - kernel_size) // 2
+        kernel = np.pad(kernel, ((pad_size, pad_size), (pad_size, pad_size)))
+    return cv2.filter2D(base_img, -1, kernel)
+
+
+def median_blur(img, kernel_size = 21):
+    #kernel_size = random.randrange(min_kernel_size, max_kernel_size, 2)
+    return np.array(cv2.medianBlur(np.array(img*255.0, dtype = np.uint8), kernel_size), dtype = np.float32) / 255.0
+
+
+def bilateral_blur(img, kernel_size = 21, min_sigma = 150, max_sigma = 250):
+    #kernel_size = random.randrange(min_kernel_size, max_kernel_size, 2)
+    sigma = random.randint(min_sigma, max_sigma)
+    return np.array(cv2.bilateralFilter(np.array(img*255.0, dtype = np.uint8), kernel_size, sigma, sigma), dtype = np.float32) / 255.0
+
+
+def random_pyblur(img):
+    pil_img = Image.fromarray(np.array(img*255.0, dtype = np.uint8))
+    blured  = RandomizedBlur(pil_img)
+    return np.array(blured, dtype = np.float32) / 255.0
+
+
+# def pil_motion_blur(img):
+#     pil_img = Image.fromarray(np.array(img*255.0, dtype = np.uint8))
+#     blured  = RandomMotion(pil_img)
+#     return np.array(blured, dtype = np.float32) / 255.0
+
+# def random_cover(img):
+#     pil_img = Image.fromarray(np.array(img*255.0, dtype = np.uint8))
+#     blured  = RandomCover(pil_img)
+#     return np.array(blured, dtype = np.float32) / 255.0
+
+# def bicubic(img):
+#     from torchvision.transforms import Resize, InterpolationMode
+#     pil_img = Image.fromarray(np.array(img*255.0, dtype = np.uint8))
+#     blur = Resize((pil_img.height // 4, pil_img.width // 4), interpolation=InterpolationMode.BICUBIC)(pil_img)
+#     blur2 = Resize((pil_img.height, pil_img.width), interpolation=InterpolationMode.BICUBIC)(blur)
+#     return np.array(blur2, dtype = np.float32) / 255.0
+
+def perstranforms(img, random_list=(3, 5)):
+    img = np.array(img*255.0, dtype = np.uint8)
+    h, w, ch = img.shape
+    pts1 = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
+    down = random.choice(random_list)
+    scale = (down + 1) // 2
+    factor = random.randint(1, 3)
+    if factor == 1:
+        pts2 = np.float32([[random.randint(0, int(w / down * (scale - 1))), random.randint(0, int(h / down * (scale - 1)))],
+                        [random.randint(int(w / down * scale), w), random.randint(0, int(h / down * (scale - 1)))], 
+                        [random.randint(0, int(w / down * (scale - 1))), random.randint(int(h / down * scale), h)],
+                        [random.randint(int(w / down * scale), w), random.randint(int(h / down * scale), h)],
+                        ])
+    elif factor == 2:
+        pts2 = np.float32([[random.randint(0, int(w / down * (scale - 1))), random.randint(int(h / down * (scale - 1)), int(h / down * scale))],
+                        [random.randint(int(w / down * (scale - 1)), int(w / down * scale)), random.randint(0, int(h / down * (scale - 1)))], 
+                        [random.randint(int(w / down * (scale - 1)), int(w / down * scale)), random.randint(int(h / down * scale), h)],
+                        [random.randint(int(w / down * scale), w), random.randint(int(h / down * (scale - 1)), int(h / down * scale))],
+                        ])
+    elif factor == 3:
+        pts2 = np.float32([
+                        [random.randint(int(w / down * (scale - 1)), int(w / down * scale)), random.randint(0, int(h / down * (scale - 1)))], 
+                        [random.randint(int(w / down * scale), w), random.randint(int(h / down * (scale - 1)), int(h / down * scale))],
+                        [random.randint(0, int(w / down * (scale - 1))), random.randint(int(h / down * (scale - 1)), int(h / down * scale))],
+                        [random.randint(int(w / down * (scale - 1)), int(w / down * scale)), random.randint(int(h / down * scale), h)],
+                        ])
+    M = cv2.getPerspectiveTransform(pts1, pts2)
+    dst = cv2.warpPerspective(img, M, (w, h))
+    N = cv2.getPerspectiveTransform(pts2, pts1)
+    dst2 = cv2.warpPerspective(dst, N, (w, h))
+    return np.array(dst2, dtype = np.float32) / 255.0
+# ------------------------------------------------------------- #
+
 
 np.seterr(divide='ignore', invalid='ignore')
 
