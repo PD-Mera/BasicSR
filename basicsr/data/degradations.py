@@ -480,6 +480,23 @@ def random_filter_mixed_kernels(img_gt,
     elif kernel_type == 'pyblur':
         return random_pyblur(img_gt)
 
+# ------------------------------------------------------------- #
+# --------------------------- crop --------------------------- #
+# ------------------------------------------------------------- #
+
+def random_crop(img, out_w, out_h, pix=20):
+    inters =  [cv2.INTER_NEAREST , cv2.INTER_LINEAR, cv2.INTER_CUBIC, cv2.INTER_AREA, cv2.INTER_LANCZOS4]
+    crop_x1 = random.randint(0, pix) if random.random() > 0.5 else 0
+    crop_y1 = random.randint(0, pix) if random.random() > 0.5 else 0
+    crop_x2 = random.randint(0, pix) if random.random() > 0.5 else 0
+    crop_y2 = random.randint(0, pix) if random.random() > 0.5 else 0
+    height, width, _ = img.shape
+
+    try:
+        img_crop = cv2.resize(img[crop_y1: height - crop_y2, crop_x1: width - crop_x2], (out_w, out_h), interpolation= random.choice(inters))
+    except:
+        img_crop = cv2.resize(img, (out_w, out_h), interpolation= random.choice(inters))
+    return img_crop
 
 # ------------------------------------------------------------- #
 # --------------------------- blur --------------------------- #
